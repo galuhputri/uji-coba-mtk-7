@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ujian Matematika - Bilangan Bulat</title>
+<style>
+  :root{--bg:#f4f6fb;--card:#fff;--tx:#1d2433;--mut:#64708a;--pri:#2c5ee8;--bad:#d93b3b;--ok:#1f9d55;--bd:#dde2ee}
+  @media (prefers-color-scheme:dark){:root{--bg:#10141f;--card:#1a2030;--tx:#e8ecf6;--mut:#9aa6c2;--bd:#2c3550}}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+  body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  input{-webkit-user-select:text;user-select:text}
+  .wrap{max-width:720px;margin:0 auto;padding:16px}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:20px;margin-bottom:14px}
+  h1{font-size:1.3rem;margin:0 0 4px} h2{font-size:1.05rem;margin:0 0 10px}
+  .mut{color:var(--mut);font-size:.9rem}
+  label{display:block;font-weight:600;margin:12px 0 4px}
+  input[type=text],input[type=number],select{width:100%;padding:11px 12px;border:1px solid var(--bd);border-radius:9px;background:var(--bg);color:var(--tx);font-size:1rem}
+  button{background:var(--pri);color:#fff;border:0;border-radius:10px;padding:12px 20px;font-size:1rem;font-weight:600;cursor:pointer}
+  button.sec{background:transparent;color:var(--pri);border:1px solid var(--pri)}
+  button:disabled{opacity:.5}
+  .opt{display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border:1px solid var(--bd);border-radius:10px;margin-top:8px;cursor:pointer}
+  .opt.sel{border-color:var(--pri);background:rgba(44,94,232,.1)}
+  .opt b{min-width:20px}
+  .top{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;background:var(--card);border-bottom:1px solid var(--bd);padding:10px 16px}
+  .timer{font-variant-numeric:tabular-nums;font-weight:700}
+  .timer.low{color:var(--bad)}
+  .nav{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+  .nav span{width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--bd);border-radius:8px;font-size:.85rem;cursor:pointer}
+  .nav span.done{background:var(--pri);color:#fff;border-color:var(--pri)}
+  .nav span.cur{outline:2px solid var(--pri)}
+  .hide{display:none!important}
+  #shield{position:fixed;inset:0;z-index:50;background:var(--bg);display:none;place-items:center;text-align:center;padding:24px}
+  #shield.on{display:grid}
+  #wm{position:fixed;inset:0;z-index:40;pointer-events:none;overflow:hidden;opacity:.07;
+      font-weight:700;font-size:16px;line-height:64px;transform:rotate(-20deg) scale(1.6);white-space:pre-wrap;word-break:break-all}
+  .big{font-size:3rem;font-weight:800;color:var(--pri)}
+  .warn{color:var(--bad);font-weight:600}
+  @media print{body{display:none!important}}
+</style>
+</head>
+<body>
+
+<!--
+  ===== CARA PAKAI SINGKAT =====
+  1. Edit blok CONFIG di bawah (judul, durasi, SHEET_URL).
+  2. Upload file ini ke repo GitHub dengan nama index.html, aktifkan GitHub Pages.
+  3. Agar nilai terkumpul: buat Google Sheet > Extensions > Apps Script, tempel:
+
+     function doPost(e){
+       var d = JSON.parse(e.postData.contents);
+       SpreadsheetApp.getActiveSheet().appendRow(
+         [new Date(), d.nama, d.absen, d.kelas, d.benar, d.total, d.nilai, d.pelanggaran, d.alasan]);
+       return ContentService.createTextOutput("ok");
+     }
+
+     Lalu Deploy > New deployment > Web app > Who has access: Anyone,
+     salin URL-nya ke SHEET_URL di CONFIG.
+-->
+
+<div id="wm"></div>
+<div id="shield"><div><h2>Ujian dijeda</h2><p>Kembali ke halaman ujian untuk melanjutkan.<br>Perpindahan layar/tab dicatat sebagai pelanggaran.</p></div></div>
+
+<!-- LAYAR 1: IDENTITAS -->
+<div id="s-id" class="wrap">
+  <div class="card">
+    <h1 id="t-judul"></h1>
+    <p class="mut" id="t-info"></p>
+    <label for="nama">Nama Lengkap</label>
+    <input type="text" id="nama" autocomplete="off" maxlength="60">
+    <label for="absen">Nomor Absen</label>
+    <input type="number" id="absen" min="1" max="99" inputmode="numeric">
+    <label for="kelas">Kelas</label>
+    <div style="display:flex;gap:10px">
+      <select id="kelas" aria-label="Kelas"></select>
+      <select id="rombel" aria-label="Rombel"></select>
+    </div>
+    <p id="err" class="warn"></p>
+  </div>
+  <div class="card">
+    <h2>Peraturan Ujian</h2>
+    <ul class="mut">
+      <li>Ujian berjalan layar penuh. Jangan keluar dari layar penuh.</li>
+      <li>Dilarang berpindah tab/aplikasi, menyalin, mengambil tangkapan layar, atau memakai AI.</li>
+      <li>Setiap pelanggaran dicatat. Pelanggaran ke-<span id="t-max"></span> akan mengakhiri ujian otomatis.</li>
+      <li>Ujian hanya bisa dikerjakan satu kali di perangkat ini.</li>
+    </ul>
+    <button id="btn-mulai">Mulai Ujian</button>
+  </div>
+</div>
+
+<!-- LAYAR 2: UJIAN -->
+<div id="s-ujian" class="hide">
+  <div class="top">
+    <div><b id="t-peserta"></b><div class="mut" id="t-pel"></div></div>
+    <div class="timer" id="timer">--:--</div>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <div class="mut" id="t-no"></div>
+      <h2 id="t-soal" style="font-size:1.15rem;margin-top:6px"></h2>
+      <div id="opts"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;gap:8px">
+      <button class="sec" id="btn-prev">Sebelumnya</button>
+      <button id="btn-next">Selanjutnya</button>
+    </div>
+    <div class="nav" id="nav"></div>
+    <div style="margin-top:18px"><button id="btn-kumpul" style="background:var(--ok)">Kumpulkan Jawaban</button></div>
+  </div>
+</div>
+
+<!-- LAYAR 3: SELESAI -->
+<div id="s-done" class="wrap hide">
+  <div class="card" style="text-align:center">
+    <h1>Ujian Selesai</h1>
+    <p class="mut" id="d-ket"></p>
+    <div id="d-nilai"></div>
+    <p class="mut" id="d-status"></p>
+    <button id="btn-kirim" class="hide">Kirim Ulang Jawaban</button>
+  </div>
+</div>
+
+<script>
+/* ================= CONFIG ================= */
+const CONFIG = {
+  JUDUL: "Latihan Matematika: Bilangan Bulat",
+  MAPEL: "Matematika SMP",
+  DAFTAR_KELAS: ["7", "8", "9"],
+  DAFTAR_ROMBEL: ["A", "B", "C", "D", "E", "F"],  // sesuaikan dengan jumlah rombel di sekolah
+  TANGGAL_UJIAN: "2026-10-09", // format TTTT-BB-HH; ujian hanya bisa dibuka pada tanggal ini ("" = tanpa batas tanggal)
+  DURASI_MENIT: 90,
+  MAX_PELANGGARAN: 3,        // ujian otomatis berakhir pada pelanggaran ke-N
+  TAMPILKAN_NILAI: false,    // false = siswa TIDAK melihat nilai; nilai hanya masuk ke spreadsheet guru
+  SHEET_URL: "https://script.google.com/macros/s/AKfycbzGsXHEoeAti4OYwY5AL5p-qjlpn9SgbE7FSc9HGcMye8jUSdbu414r9yWZdsx-O6Vg/exec",  // Google Apps Script milik guru
+  STORAGE_KEY: "ujian_bilangan_bulat_v1",
+  SATU_KALI: true            // true = 1 perangkat hanya bisa mengerjakan 1 kali (set false saat Anda masih tes sendiri)
+};
+
+/* Format: q = soal, o = pilihan, a = indeks jawaban benar (mulai dari 0) */
+const SOAL = [
+  {q:"Berikut ini yang merupakan bilangan bulat adalah ....", o:["25","50%","0,6","¾"], a:0},
+  {q:"Diketahui bilangan -15 ... 3. Tanda perbandingan yang sesuai untuk menghubungkan kedua bilangan adalah ....", o:["<",">","=","≤"], a:0},
+  {q:"Diketahui bilangan 12 ... -12. Tanda perbandingan yang sesuai untuk menghubungkan kedua bilangan adalah ....", o:["<",">","=","≤"], a:1},
+  {q:"Urutan bilangan dari terkecil ke terbesar pada bilangan 22, -11, 15, -23, -17, 29, dan -7 adalah ....",
+   o:["-7, -11, -17, -23, 15, 22, dan 29","-7, -11, -17, -23, 29, 22, dan 15","-23, -17, -11, -7, 15, 22, dan 29","-23, -17, -11, -7, 29, 22, dan 15"], a:2},
+  {q:"Urutan bilangan terkecil ke terbesar dari -56, 48, 29, -62, 30 adalah ....",
+   o:["-62, -56, 48, 30, 29","-62, -56, 29, 30, 48","29, 30, 48, -56, -62","-56, -62, 29, 30, 48"], a:1},
+  {q:"Suhu dalam mesin pendingin adalah -5 °C, sedangkan suhu di dalam ruangan adalah 16 °C. Selisih suhu dalam mesin pendingin dengan suhu ruangan adalah ... °C.",
+   o:["20","21","23","24"], a:1}
+];
+/* ================= END CONFIG ================= */
+
+const $ = id => document.getElementById(id);
+const LABEL = "ABCDEFGH";
+let peserta = {}, paket = [], jawab = [], idx = 0, sisa = 0, tick = null;
+let pelanggaran = 0, aktif = false, selesai = false, lastViol = 0, alasanAkhir = "";
+
+/* ---------- util ---------- */
+function acak(arr){ const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]] = [a[j],a[i]]; } return a; }
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function safeGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function safeSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+function show(id){ ["s-id","s-ujian","s-done"].forEach(x => $(x).classList.toggle("hide", x!==id)); }
+
+/* ---------- init ---------- */
+$("t-judul").textContent = CONFIG.JUDUL;
+$("t-info").textContent = `${CONFIG.MAPEL} • ${SOAL.length} soal • ${CONFIG.DURASI_MENIT} menit` +
+  (CONFIG.TANGGAL_UJIAN ? ` • Tanggal ${CONFIG.TANGGAL_UJIAN.split("-").reverse().join("-")}` : "");
+$("t-max").textContent = CONFIG.MAX_PELANGGARAN;
+$("kelas").innerHTML = `<option value="">-- Pilih Kelas --</option>` +
+  CONFIG.DAFTAR_KELAS.map(k => `<option value="${esc(k)}">Kelas ${esc(k)}</option>`).join("");
+$("rombel").innerHTML = `<option value="">-- Pilih Rombel --</option>` +
+  CONFIG.DAFTAR_ROMBEL.map(r => `<option value="${esc(r)}">Rombel ${esc(r)}</option>`).join("");
+
+function hariIni(){
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+const TANGGAL_OK = !CONFIG.TANGGAL_UJIAN || hariIni() === CONFIG.TANGGAL_UJIAN;
+
+if (!TANGGAL_OK) {
+  show("s-done");
+  $("d-ket").textContent = `Ujian ini hanya dapat dibuka pada tanggal ${CONFIG.TANGGAL_UJIAN.split("-").reverse().join("-")}.`;
+  $("d-nilai").innerHTML = `<p class="warn">Ujian belum dibuka atau sudah ditutup.</p>`;
+  selesai = true;
+} else if (CONFIG.SATU_KALI && safeGet(CONFIG.STORAGE_KEY)) {
+  const prev = JSON.parse(safeGet(CONFIG.STORAGE_KEY));
+  show("s-done");
+  $("d-ket").textContent = `${prev.nama} (Absen ${prev.absen}, Kelas ${prev.kelas}) sudah mengerjakan ujian ini di perangkat ini.`;
+  $("d-nilai").innerHTML = CONFIG.TAMPILKAN_NILAI ? `<div class="big">${prev.nilai}</div>` : "";
+  selesai = true;
+}
+
+/* ---------- mulai ---------- */
+$("btn-mulai").onclick = async () => {
+  const nama = $("nama").value.trim().replace(/\s+/g," ");
+  const absen = $("absen").value.trim();
+  const kelasPilih = $("kelas").value, rombelPilih = $("rombel").value;
+  const kelas = kelasPilih && rombelPilih ? kelasPilih + rombelPilih : "";
+  if (nama.length < 3 || !/\s|^\S{3,}$/.test(nama)) return $("err").textContent = "Isi Nama Lengkap dengan benar.";
+  if (!absen || +absen < 1) return $("err").textContent = "Isi Nomor Absen dengan benar.";
+  if (!kelas) return $("err").textContent = "Pilih Kelas dan Rombel.";
+  $("err").textContent = "";
+  peserta = {nama, absen, kelas};
+
+  try { await document.documentElement.requestFullscreen(); }
+  catch(e){ /* iOS Safari tidak mendukung; ujian tetap jalan dengan deteksi blur/tab */ }
+
+  // acak urutan soal dan pilihan jawaban
+  paket = acak(SOAL.map((s,i) => ({
+    id:i, q:s.q,
+    o: acak(s.o.map((t,k) => ({t, ok:k===s.a})))
+  })));
+  jawab = new Array(paket.length).fill(null);
+  idx = 0; sisa = CONFIG.DURASI_MENIT*60; aktif = true;
+
+  $("t-peserta").textContent = `${nama}`;
+  $("t-pel").textContent = `Absen ${absen} • Kelas ${kelas}`;
+  // watermark identitas (menyulitkan penyebaran tangkapan layar)
+  const wmText = `${nama} • ${absen} • ${kelas}   `.repeat(400);
+  $("wm").textContent = wmText;
+
+  buatNav(); render(); show("s-ujian");
+  tick = setInterval(() => {
+    sisa--; updTimer();
+    if (sisa <= 0) akhiri("Waktu habis");
+  }, 1000);
+  updTimer();
+};
+
+/* ---------- render ---------- */
+function render(){
+  const p = paket[idx];
+  $("t-no").textContent = `Soal ${idx+1} dari ${paket.length}`;
+  $("t-soal").textContent = p.q;
+  $("opts").innerHTML = p.o.map((op,k) =>
+    `<div class="opt ${jawab[idx]===k?'sel':''}" data-k="${k}"><b>${LABEL[k]}.</b><span>${esc(op.t)}</span></div>`).join("");
+  $("opts").querySelectorAll(".opt").forEach(el => el.onclick = () => { jawab[idx] = +el.dataset.k; render(); buatNav(); });
+  $("btn-prev").disabled = idx===0;
+  $("btn-next").disabled = idx===paket.length-1;
+  buatNav();
+}
+function buatNav(){
+  $("nav").innerHTML = paket.map((_,i) =>
+    `<span class="${jawab[i]!==null?'done':''} ${i===idx?'cur':''}" data-i="${i}">${i+1}</span>`).join("");
+  $("nav").querySelectorAll("span").forEach(el => el.onclick = () => { idx = +el.dataset.i; render(); });
+}
+$("btn-prev").onclick = () => { if(idx>0){ idx--; render(); } };
+$("btn-next").onclick = () => { if(idx<paket.length-1){ idx++; render(); } };
+function updTimer(){
+  const m = String(Math.max(0,Math.floor(sisa/60))).padStart(2,"0");
+  const s = String(Math.max(0,sisa%60)).padStart(2,"0");
+  $("timer").textContent = `${m}:${s}`;
+  $("timer").classList.toggle("low", sisa<=60);
+}
+$("btn-kumpul").onclick = () => {
+  const kosong = jawab.filter(x => x===null).length;
+  const msg = kosong ? `Masih ada ${kosong} soal belum dijawab. Kumpulkan sekarang?` : "Kumpulkan jawaban sekarang?";
+  if (confirm(msg)) akhiri("Dikumpulkan siswa");
+};
+
+/* ---------- selesai & kirim ---------- */
+async function akhiri(alasan){
+  if (selesai) return;
+  selesai = true; aktif = false; clearInterval(tick); alasanAkhir = alasan;
+  $("shield").classList.remove("on");
+  if (document.fullscreenElement) { try{ await document.exitFullscreen(); }catch(e){} }
+
+  const benar = paket.reduce((n,p,i) => n + (jawab[i]!==null && p.o[jawab[i]].ok ? 1 : 0), 0);
+  const nilai = Math.round(benar/paket.length*100);
+  const hasil = {...peserta, benar, total:paket.length, nilai, pelanggaran, alasan,
+                 waktu:new Date().toISOString()};
+  safeSet(CONFIG.STORAGE_KEY, JSON.stringify(hasil));
+
+  show("s-done"); $("wm").textContent = "";
+  $("d-ket").textContent = `${peserta.nama} (Absen ${peserta.absen}, Kelas ${peserta.kelas}) — ${alasan}`;
+  $("d-nilai").innerHTML = CONFIG.TAMPILKAN_NILAI
+    ? `<div class="big">${nilai}</div><div class="mut">${benar} benar dari ${paket.length} soal</div>`
+    : `<p>Terima kasih, ujian telah selesai. Hasil akan disampaikan oleh guru.</p>`;
+
+  kirim(hasil);
+}
+
+async function kirim(hasil){
+  const st = $("d-status"), btn = $("btn-kirim");
+  btn.classList.add("hide");
+  if (!CONFIG.SHEET_URL) {
+    st.innerHTML = `<span class="warn">SHEET_URL belum diisi, hasil TIDAK terkirim ke spreadsheet guru.</span>`;
+    return;
+  }
+  st.textContent = "Mengirim jawaban...";
+  try {
+    await fetch(CONFIG.SHEET_URL, {method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(hasil)});
+    st.textContent = "Jawaban berhasil terkirim.";
+  } catch(e){
+    st.innerHTML = `<span class="warn">Gagal mengirim. Periksa koneksi internet, lalu tekan tombol di bawah.</span>`;
+    btn.classList.remove("hide");
+    btn.onclick = () => kirim(hasil);
+  }
+}
+
+/* ---------- ANTI-KECURANGAN (penghambat & pendeteksi) ---------- */
+function pelanggar(sebab){
+  if (!aktif || selesai) return;
+  const now = Date.now();
+  if (now - lastViol < 1500) return;       // cegah hitung ganda (blur + visibilitychange)
+  lastViol = now; pelanggaran++;
+  if (pelanggaran >= CONFIG.MAX_PELANGGARAN) { akhiri(`Dihentikan: ${sebab}`); return; }
+  alert(`PERINGATAN ${pelanggaran}/${CONFIG.MAX_PELANGGARAN}: ${sebab}.\nPelanggaran ke-${CONFIG.MAX_PELANGGARAN} akan mengakhiri ujian.`);
+  if (!document.fullscreenElement && document.documentElement.requestFullscreen)
+    document.documentElement.requestFullscreen().catch(()=>{});
+}
+
+// pindah tab / minimize / buka aplikasi lain / Google Lens, dsb.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { $("shield").classList.add("on"); pelanggar("Meninggalkan halaman ujian"); }
+  else $("shield").classList.remove("on");
+});
+window.addEventListener("blur", () => { if (aktif) { $("shield").classList.add("on"); pelanggar("Halaman ujian kehilangan fokus"); } });
+window.addEventListener("focus", () => $("shield").classList.remove("on"));
+document.addEventListener("fullscreenchange", () => {
+  if (aktif && !document.fullscreenElement) pelanggar("Keluar dari layar penuh");
+});
+
+// salin / tempel / klik kanan / seleksi / seret / cetak
+["copy","cut","paste","contextmenu","dragstart","selectstart"].forEach(ev =>
+  document.addEventListener(ev, e => { if (aktif && !(e.target && e.target.tagName==="INPUT")) e.preventDefault(); }));
+window.addEventListener("beforeprint", () => { if (aktif) pelanggar("Mencoba mencetak"); });
+
+document.addEventListener("keydown", e => {
+  if (!aktif) return;
+  const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey;
+  if (k === "printscreen" || k === "snapshot") {
+    e.preventDefault();
+    try{ navigator.clipboard.writeText(""); }catch(_){}
+    pelanggar("Mencoba tangkapan layar"); return;
+  }
+  if (e.metaKey && e.shiftKey && ["3","4","5","s"].includes(k)) { e.preventDefault(); pelanggar("Mencoba tangkapan layar"); return; }
+  if (k === "f12" || (ctrl && e.shiftKey && ["i","j","c"].includes(k)) ||
+      (ctrl && ["u","s","p","a","c","x","v","f"].includes(k))) {
+    e.preventDefault(); return;
+  }
+});
+// Windows: tombol PrintScreen kadang hanya terbaca saat keyup
+document.addEventListener("keyup", e => {
+  if (aktif && (e.key === "PrintScreen")) { try{ navigator.clipboard.writeText(""); }catch(_){} pelanggar("Mencoba tangkapan layar"); }
+});
+
+// cegah tutup/refresh tidak sengaja
+window.addEventListener("beforeunload", e => { if (aktif) { e.preventDefault(); e.returnValue = ""; } });
+</script>
+</body>
+</html>
