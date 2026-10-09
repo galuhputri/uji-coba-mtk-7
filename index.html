@@ -133,7 +133,7 @@ const CONFIG = {
   DURASI_MENIT: 90,
   MAX_PELANGGARAN: 3,        // ujian otomatis berakhir pada pelanggaran ke-N
   TAMPILKAN_NILAI: false,    // false = siswa TIDAK melihat nilai; nilai hanya masuk ke spreadsheet guru
-  SHEET_URL: "https://script.google.com/macros/s/AKfycbzGsXHEoeAti4OYwY5AL5p-qjlpn9SgbE7FSc9HGcMye8jUSdbu414r9yWZdsx-O6Vg/exec",  // Google Apps Script milik guru
+  SHEET_URL: "https://script.google.com/macros/s/AKfycbxHgMc8czGd1uNse4HRO1YOu-le0U5CDp4qkrpCK7wgo08SsWsEMUb8niD83rlOJCiz/exec",  // Google Apps Script milik guru
   STORAGE_KEY: "ujian_bilangan_bulat_v1",
   SATU_KALI: true            // true = 1 perangkat hanya bisa mengerjakan 1 kali (set false saat Anda masih tes sendiri)
 };
@@ -287,7 +287,7 @@ async function kirim(hasil){
   const st = $("d-status"), btn = $("btn-kirim");
   btn.classList.add("hide");
   if (!CONFIG.SHEET_URL) {
-    st.innerHTML = `<span class="warn">SHEET_URL belum diisi, hasil TIDAK terkirim ke spreadsheet guru.</span>`;
+    st.innerHTML = `<span class="warn">SHEET_URL https://script.google.com/macros/s/AKfycbxHgMc8czGd1uNse4HRO1YOu-le0U5CDp4qkrpCK7wgo08SsWsEMUb8niD83rlOJCiz/exec.</span>`;
     return;
   }
   st.textContent = "Mengirim jawaban...";
