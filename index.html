@@ -17,7 +17,8 @@
   .mut{color:var(--mut);font-size:.9rem}
   label{display:block;font-weight:600;margin:12px 0 4px}
   input[type=text],input[type=number],select{width:100%;padding:11px 12px;border:1px solid var(--bd);border-radius:9px;background:var(--bg);color:var(--tx);font-size:1rem}
-  button{background:var(--pri);color:#fff;border:0;border-radius:10px;padding:12px 20px;font-size:1rem;font-weight:600;cursor:pointer}
+  input:disabled,select:disabled{opacity:.7}
+  button{background:var(--pri);color:#fff;border:0;border-radius:10px;padding:12px 20px;font-size:1rem;font-weight:600;cursor:pointer;margin-top:6px}
   button.sec{background:transparent;color:var(--pri);border:1px solid var(--pri)}
   button:disabled{opacity:.5}
   .opt{display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border:1px solid var(--bd);border-radius:10px;margin-top:8px;cursor:pointer}
@@ -44,19 +45,10 @@
 
 <!--
   ===== CARA PAKAI SINGKAT =====
-  1. Edit blok CONFIG di bawah (judul, durasi, SHEET_URL).
-  2. Upload file ini ke repo GitHub dengan nama index.html, aktifkan GitHub Pages.
-  3. Agar nilai terkumpul: buat Google Sheet > Extensions > Apps Script, tempel:
-
-     function doPost(e){
-       var d = JSON.parse(e.postData.contents);
-       SpreadsheetApp.getActiveSheet().appendRow(
-         [new Date(), d.nama, d.absen, d.kelas, d.benar, d.total, d.nilai, d.pelanggaran, d.alasan]);
-       return ContentService.createTextOutput("ok");
-     }
-
-     Lalu Deploy > New deployment > Web app > Who has access: Anyone,
-     salin URL-nya ke SHEET_URL di CONFIG.
+  1. Edit blok CONFIG di bawah (judul, durasi, tanggal, SHEET_URL, MAKS_PERCOBAAN).
+  2. Upload file ini ke repo GitHub dengan nama persis index.html, aktifkan GitHub Pages.
+  3. Hasil dikirim ke Google Sheet lewat Google Apps Script (URL di SHEET_URL).
+  4. Saat Anda mengetes sendiri, set MODE_TES: true, lalu kembalikan ke false sebelum dibagikan.
 -->
 
 <div id="wm"></div>
@@ -84,9 +76,20 @@
       <li>Ujian berjalan layar penuh. Jangan keluar dari layar penuh.</li>
       <li>Dilarang berpindah tab/aplikasi, menyalin, mengambil tangkapan layar, atau memakai AI.</li>
       <li>Setiap pelanggaran dicatat. Pelanggaran ke-<span id="t-max"></span> akan mengakhiri ujian otomatis.</li>
-      <li>Ujian hanya bisa dikerjakan satu kali di perangkat ini.</li>
+      <li>Jika ujian dihentikan karena pelanggaran yang tidak disengaja, Anda dapat mengulang (maksimal <span id="t-pct"></span> percobaan).</li>
+      <li>Jika halaman tertutup atau koneksi terputus, buka kembali link yang sama untuk melanjutkan. Waktu tetap berjalan.</li>
     </ul>
     <button id="btn-mulai">Mulai Ujian</button>
+  </div>
+</div>
+
+<!-- LAYAR: LANJUTKAN SESI -->
+<div id="s-lanjut" class="wrap hide">
+  <div class="card">
+    <h1>Lanjutkan Ujian?</h1>
+    <p class="mut" id="l-ket"></p>
+    <p class="mut" id="l-sisa"></p>
+    <button id="btn-lanjut">Lanjutkan Ujian</button>
   </div>
 </div>
 
@@ -119,6 +122,8 @@
     <div id="d-nilai"></div>
     <p class="mut" id="d-status"></p>
     <button id="btn-kirim" class="hide">Kirim Ulang Jawaban</button>
+    <p class="mut" id="d-ulang"></p>
+    <button id="btn-ulang" class="sec hide">Ulangi Ujian</button>
   </div>
 </div>
 
@@ -132,10 +137,11 @@ const CONFIG = {
   TANGGAL_UJIAN: "2026-10-09", // format TTTT-BB-HH; ujian hanya bisa dibuka pada tanggal ini ("" = tanpa batas tanggal)
   DURASI_MENIT: 90,
   MAX_PELANGGARAN: 3,        // ujian otomatis berakhir pada pelanggaran ke-N
+  MAKS_PERCOBAAN: 3,         // total percobaan per siswa jika ujian dihentikan karena pelanggaran (1 = tidak boleh mengulang)
   TAMPILKAN_NILAI: false,    // false = siswa TIDAK melihat nilai; nilai hanya masuk ke spreadsheet guru
   SHEET_URL: "https://script.google.com/macros/s/AKfycbzGsXHEoeAti4OYwY5AL5p-qjlpn9SgbE7FSc9HGcMye8jUSdbu414r9yWZdsx-O6Vg/exec",  // Google Apps Script milik guru
-  STORAGE_KEY: "ujian_bilangan_bulat_v1",
-  SATU_KALI: true            // true = 1 perangkat hanya bisa mengerjakan 1 kali (set false saat Anda masih tes sendiri)
+  STORAGE_KEY: "ujian_bilangan_bulat_v2",
+  MODE_TES: false            // true = abaikan riwayat selesai di perangkat ini (untuk Anda mengetes berulang kali)
 };
 
 /* Format: q = soal, o = pilihan, a = indeks jawaban benar (mulai dari 0) */
@@ -154,21 +160,34 @@ const SOAL = [
 
 const $ = id => document.getElementById(id);
 const LABEL = "ABCDEFGH";
-let peserta = {}, paket = [], jawab = [], idx = 0, sisa = 0, tick = null;
-let pelanggaran = 0, aktif = false, selesai = false, lastViol = 0, alasanAkhir = "";
+const K_HASIL = CONFIG.STORAGE_KEY + "_hasil";   // hasil terakhir yang sudah selesai
+const K_SESI  = CONFIG.STORAGE_KEY + "_sesi";    // ujian yang sedang berjalan (untuk dilanjutkan)
+
+let peserta = {}, paket = [], jawab = [], idx = 0, sisa = 0, endAt = 0, tick = null, nTick = 0;
+let pelanggaran = 0, aktif = false, selesai = false, lastViol = 0, percobaan = 1, muatUlang = 0;
 
 /* ---------- util ---------- */
 function acak(arr){ const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]] = [a[j],a[i]]; } return a; }
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-function safeGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
-function safeSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
-function show(id){ ["s-id","s-ujian","s-done"].forEach(x => $(x).classList.toggle("hide", x!==id)); }
+function baca(k){ try{ return JSON.parse(localStorage.getItem(k)); }catch(e){ return null; } }
+function tulis(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+function hapus(k){ try{ localStorage.removeItem(k); }catch(e){} }
+function show(id){ ["s-id","s-lanjut","s-ujian","s-done"].forEach(x => $(x).classList.toggle("hide", x!==id)); }
+function fmtWaktu(d){ const m = Math.max(0,Math.floor(d/60)), s = Math.max(0,d%60); return String(m).padStart(2,"0")+":"+String(s).padStart(2,"0"); }
+function bangunPaket(){
+  return acak(SOAL.map((s,i) => ({ id:i, q:s.q, o: acak(s.o.map((t,k) => ({t, ok:k===s.a}))) })));
+}
+function simpan(){
+  if (!aktif || selesai) return;
+  tulis(K_SESI, {peserta, paket, jawab, idx, endAt, pelanggaran, percobaan, muatUlang});
+}
 
 /* ---------- init ---------- */
 $("t-judul").textContent = CONFIG.JUDUL;
 $("t-info").textContent = `${CONFIG.MAPEL} • ${SOAL.length} soal • ${CONFIG.DURASI_MENIT} menit` +
   (CONFIG.TANGGAL_UJIAN ? ` • Tanggal ${CONFIG.TANGGAL_UJIAN.split("-").reverse().join("-")}` : "");
 $("t-max").textContent = CONFIG.MAX_PELANGGARAN;
+$("t-pct").textContent = CONFIG.MAKS_PERCOBAAN;
 $("kelas").innerHTML = `<option value="">-- Pilih Kelas --</option>` +
   CONFIG.DAFTAR_KELAS.map(k => `<option value="${esc(k)}">Kelas ${esc(k)}</option>`).join("");
 $("rombel").innerHTML = `<option value="">-- Pilih Rombel --</option>` +
@@ -185,15 +204,14 @@ if (!TANGGAL_OK) {
   $("d-ket").textContent = `Ujian ini hanya dapat dibuka pada tanggal ${CONFIG.TANGGAL_UJIAN.split("-").reverse().join("-")}.`;
   $("d-nilai").innerHTML = `<p class="warn">Ujian belum dibuka atau sudah ditutup.</p>`;
   selesai = true;
-} else if (CONFIG.SATU_KALI && safeGet(CONFIG.STORAGE_KEY)) {
-  const prev = JSON.parse(safeGet(CONFIG.STORAGE_KEY));
-  show("s-done");
-  $("d-ket").textContent = `${prev.nama} (Absen ${prev.absen}, Kelas ${prev.kelas}) sudah mengerjakan ujian ini di perangkat ini.`;
-  $("d-nilai").innerHTML = CONFIG.TAMPILKAN_NILAI ? `<div class="big">${prev.nilai}</div>` : "";
-  selesai = true;
+} else {
+  const sesi = baca(K_SESI), hasil = baca(K_HASIL);
+  if (sesi) tampilLanjut(sesi);                       // ujian terputus -> tawarkan melanjutkan
+  else if (hasil && !CONFIG.MODE_TES) tampilSelesai(hasil);  // sudah pernah selesai di perangkat ini
+  else show("s-id");
 }
 
-/* ---------- mulai ---------- */
+/* ---------- mulai (baru / ulang) ---------- */
 $("btn-mulai").onclick = async () => {
   const nama = $("nama").value.trim().replace(/\s+/g," ");
   const absen = $("absen").value.trim();
@@ -205,30 +223,52 @@ $("btn-mulai").onclick = async () => {
   $("err").textContent = "";
   peserta = {nama, absen, kelas};
 
+  const prev = baca(K_HASIL);
+  percobaan = prev ? (prev.percobaan || 1) + 1 : 1;
+  muatUlang = 0; pelanggaran = 0;
+
   try { await document.documentElement.requestFullscreen(); }
   catch(e){ /* iOS Safari tidak mendukung; ujian tetap jalan dengan deteksi blur/tab */ }
 
-  // acak urutan soal dan pilihan jawaban
-  paket = acak(SOAL.map((s,i) => ({
-    id:i, q:s.q,
-    o: acak(s.o.map((t,k) => ({t, ok:k===s.a})))
-  })));
+  paket = bangunPaket();                       // soal & pilihan diacak ulang di tiap percobaan
   jawab = new Array(paket.length).fill(null);
-  idx = 0; sisa = CONFIG.DURASI_MENIT*60; aktif = true;
-
-  $("t-peserta").textContent = `${nama}`;
-  $("t-pel").textContent = `Absen ${absen} • Kelas ${kelas}`;
-  // watermark identitas (menyulitkan penyebaran tangkapan layar)
-  const wmText = `${nama} • ${absen} • ${kelas}   `.repeat(400);
-  $("wm").textContent = wmText;
-
-  buatNav(); render(); show("s-ujian");
-  tick = setInterval(() => {
-    sisa--; updTimer();
-    if (sisa <= 0) akhiri("Waktu habis");
-  }, 1000);
-  updTimer();
+  idx = 0; endAt = Date.now() + CONFIG.DURASI_MENIT*60*1000;
+  masukUjian();
 };
+
+function masukUjian(){
+  aktif = true; selesai = false; nTick = 0;
+  $("t-peserta").textContent = peserta.nama;
+  $("t-pel").textContent = `Absen ${peserta.absen} • Kelas ${peserta.kelas}` + (percobaan>1 ? ` • Percobaan ke-${percobaan}` : "");
+  $("wm").textContent = `${peserta.nama} • ${peserta.absen} • ${peserta.kelas}   `.repeat(400);   // watermark identitas
+  show("s-ujian"); render();
+  clearInterval(tick);
+  tick = setInterval(() => {
+    sisa = Math.ceil((endAt - Date.now())/1000);   // dihitung dari waktu akhir, jadi reload tidak mereset timer
+    updTimer();
+    if (sisa <= 0) akhiri("Waktu habis");
+    else if (++nTick % 5 === 0) simpan();
+  }, 1000);
+  sisa = Math.ceil((endAt - Date.now())/1000); updTimer(); simpan();
+}
+
+/* ---------- lanjutkan sesi yang terputus ---------- */
+function tampilLanjut(s){
+  const sisaDetik = Math.ceil((s.endAt - Date.now())/1000);
+  $("l-ket").textContent = `${s.peserta.nama} (Absen ${s.peserta.absen}, Kelas ${s.peserta.kelas}) — ujian sebelumnya belum selesai (halaman tertutup atau koneksi terputus).`;
+  $("l-sisa").textContent = sisaDetik > 0
+    ? `Sisa waktu: ${fmtWaktu(sisaDetik)}. Jawaban yang sudah dipilih tetap tersimpan.`
+    : "Waktu ujian sudah habis. Jawaban yang tersimpan akan dikumpulkan.";
+  $("btn-lanjut").textContent = sisaDetik > 0 ? "Lanjutkan Ujian" : "Kumpulkan Jawaban";
+  show("s-lanjut");
+  $("btn-lanjut").onclick = async () => {
+    peserta = s.peserta; paket = s.paket; jawab = s.jawab; idx = s.idx || 0; endAt = s.endAt;
+    pelanggaran = s.pelanggaran || 0; percobaan = s.percobaan || 1; muatUlang = (s.muatUlang || 0) + 1;
+    if (Date.now() >= endAt) { akhiri("Waktu habis"); return; }
+    try { await document.documentElement.requestFullscreen(); } catch(e){}
+    masukUjian();
+  };
+}
 
 /* ---------- render ---------- */
 function render(){
@@ -237,7 +277,7 @@ function render(){
   $("t-soal").textContent = p.q;
   $("opts").innerHTML = p.o.map((op,k) =>
     `<div class="opt ${jawab[idx]===k?'sel':''}" data-k="${k}"><b>${LABEL[k]}.</b><span>${esc(op.t)}</span></div>`).join("");
-  $("opts").querySelectorAll(".opt").forEach(el => el.onclick = () => { jawab[idx] = +el.dataset.k; render(); buatNav(); });
+  $("opts").querySelectorAll(".opt").forEach(el => el.onclick = () => { jawab[idx] = +el.dataset.k; render(); simpan(); });
   $("btn-prev").disabled = idx===0;
   $("btn-next").disabled = idx===paket.length-1;
   buatNav();
@@ -250,9 +290,7 @@ function buatNav(){
 $("btn-prev").onclick = () => { if(idx>0){ idx--; render(); } };
 $("btn-next").onclick = () => { if(idx<paket.length-1){ idx++; render(); } };
 function updTimer(){
-  const m = String(Math.max(0,Math.floor(sisa/60))).padStart(2,"0");
-  const s = String(Math.max(0,sisa%60)).padStart(2,"0");
-  $("timer").textContent = `${m}:${s}`;
+  $("timer").textContent = fmtWaktu(sisa);
   $("timer").classList.toggle("low", sisa<=60);
 }
 $("btn-kumpul").onclick = () => {
@@ -264,26 +302,52 @@ $("btn-kumpul").onclick = () => {
 /* ---------- selesai & kirim ---------- */
 async function akhiri(alasan){
   if (selesai) return;
-  selesai = true; aktif = false; clearInterval(tick); alasanAkhir = alasan;
+  selesai = true; aktif = false; clearInterval(tick);
   $("shield").classList.remove("on");
   if (document.fullscreenElement) { try{ await document.exitFullscreen(); }catch(e){} }
 
   const benar = paket.reduce((n,p,i) => n + (jawab[i]!==null && p.o[jawab[i]].ok ? 1 : 0), 0);
   const nilai = Math.round(benar/paket.length*100);
-  const hasil = {...peserta, benar, total:paket.length, nilai, pelanggaran, alasan,
-                 waktu:new Date().toISOString()};
-  safeSet(CONFIG.STORAGE_KEY, JSON.stringify(hasil));
-
-  show("s-done"); $("wm").textContent = "";
-  $("d-ket").textContent = `${peserta.nama} (Absen ${peserta.absen}, Kelas ${peserta.kelas}) — ${alasan}`;
-  $("d-nilai").innerHTML = CONFIG.TAMPILKAN_NILAI
-    ? `<div class="big">${nilai}</div><div class="mut">${benar} benar dari ${paket.length} soal</div>`
-    : `<p>Terima kasih, ujian telah selesai. Hasil akan disampaikan oleh guru.</p>`;
-
-  kirim(hasil);
+  const hasil = {...peserta, benar, total:paket.length, nilai, pelanggaran,
+                 alasan: `${alasan} (percobaan ke-${percobaan})`,
+                 percobaan, muat_ulang: muatUlang,
+                 henti: alasan.startsWith("Dihentikan"),     // true = dihentikan karena pelanggaran
+                 terkirim: false, waktu: new Date().toISOString()};
+  hapus(K_SESI);
+  tulis(K_HASIL, hasil);     // disimpan dulu, jadi tidak hilang walau koneksi putus
+  tampilSelesai(hasil);
 }
 
-async function kirim(hasil){
+function tampilSelesai(h){
+  selesai = true;
+  show("s-done"); $("wm").textContent = "";
+  $("d-ket").textContent = `${h.nama} (Absen ${h.absen}, Kelas ${h.kelas}) — ${h.alasan}`;
+  $("d-nilai").innerHTML = CONFIG.TAMPILKAN_NILAI
+    ? `<div class="big">${h.nilai}</div><div class="mut">${h.benar} benar dari ${h.total} soal</div>`
+    : `<p>Terima kasih, ujian telah selesai. Hasil akan disampaikan oleh guru.</p>`;
+
+  // tombol ulang: hanya jika dihentikan karena pelanggaran & masih ada kesempatan
+  const sisaPct = CONFIG.MAKS_PERCOBAAN - (h.percobaan || 1);
+  const bisaUlang = h.henti && sisaPct > 0;
+  $("btn-ulang").classList.toggle("hide", !bisaUlang);
+  $("d-ulang").textContent = bisaUlang
+    ? `Ujian Anda dihentikan karena pelanggaran. Jika itu tidak disengaja, Anda dapat mengulang (sisa kesempatan: ${sisaPct}).`
+    : (h.henti ? "Kesempatan mengulang sudah habis. Silakan hubungi guru." : "");
+
+  if (h.terkirim) $("d-status").textContent = "Jawaban berhasil terkirim.";
+  else kirim(h);
+}
+
+$("btn-ulang").onclick = () => {
+  const h = baca(K_HASIL); if (!h) return;
+  const k = CONFIG.DAFTAR_KELAS.find(x => h.kelas.startsWith(x)) || "";
+  $("nama").value = h.nama; $("absen").value = h.absen;
+  $("kelas").value = k; $("rombel").value = h.kelas.slice(k.length);
+  ["nama","absen","kelas","rombel"].forEach(id => $(id).disabled = true);   // identitas dikunci saat mengulang
+  selesai = false; show("s-id");
+};
+
+async function kirim(h){
   const st = $("d-status"), btn = $("btn-kirim");
   btn.classList.add("hide");
   if (!CONFIG.SHEET_URL) {
@@ -292,12 +356,13 @@ async function kirim(hasil){
   }
   st.textContent = "Mengirim jawaban...";
   try {
-    await fetch(CONFIG.SHEET_URL, {method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(hasil)});
+    await fetch(CONFIG.SHEET_URL, {method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(h)});
+    h.terkirim = true; tulis(K_HASIL, h);
     st.textContent = "Jawaban berhasil terkirim.";
   } catch(e){
     st.innerHTML = `<span class="warn">Gagal mengirim. Periksa koneksi internet, lalu tekan tombol di bawah.</span>`;
     btn.classList.remove("hide");
-    btn.onclick = () => kirim(hasil);
+    btn.onclick = () => kirim(h);
   }
 }
 
@@ -306,7 +371,7 @@ function pelanggar(sebab){
   if (!aktif || selesai) return;
   const now = Date.now();
   if (now - lastViol < 1500) return;       // cegah hitung ganda (blur + visibilitychange)
-  lastViol = now; pelanggaran++;
+  lastViol = now; pelanggaran++; simpan();
   if (pelanggaran >= CONFIG.MAX_PELANGGARAN) { akhiri(`Dihentikan: ${sebab}`); return; }
   alert(`PERINGATAN ${pelanggaran}/${CONFIG.MAX_PELANGGARAN}: ${sebab}.\nPelanggaran ke-${CONFIG.MAX_PELANGGARAN} akan mengakhiri ujian.`);
   if (!document.fullscreenElement && document.documentElement.requestFullscreen)
@@ -315,7 +380,7 @@ function pelanggar(sebab){
 
 // pindah tab / minimize / buka aplikasi lain / Google Lens, dsb.
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { $("shield").classList.add("on"); pelanggar("Meninggalkan halaman ujian"); }
+  if (document.hidden) { if (aktif) { $("shield").classList.add("on"); pelanggar("Meninggalkan halaman ujian"); } }
   else $("shield").classList.remove("on");
 });
 window.addEventListener("blur", () => { if (aktif) { $("shield").classList.add("on"); pelanggar("Halaman ujian kehilangan fokus"); } });
@@ -343,13 +408,12 @@ document.addEventListener("keydown", e => {
     e.preventDefault(); return;
   }
 });
-// Windows: tombol PrintScreen kadang hanya terbaca saat keyup
 document.addEventListener("keyup", e => {
-  if (aktif && (e.key === "PrintScreen")) { try{ navigator.clipboard.writeText(""); }catch(_){} pelanggar("Mencoba tangkapan layar"); }
+  if (aktif && e.key === "PrintScreen") { try{ navigator.clipboard.writeText(""); }catch(_){} pelanggar("Mencoba tangkapan layar"); }
 });
 
-// cegah tutup/refresh tidak sengaja
-window.addEventListener("beforeunload", e => { if (aktif) { e.preventDefault(); e.returnValue = ""; } });
+// cegah tutup/refresh tidak sengaja (jika tetap tertutup, ujian bisa dilanjutkan dari link yang sama)
+window.addEventListener("beforeunload", e => { if (aktif) { simpan(); e.preventDefault(); e.returnValue = ""; } });
 </script>
 </body>
 </html>
