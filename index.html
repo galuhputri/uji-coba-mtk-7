@@ -32,6 +32,7 @@
   .nav span.done{background:var(--pri);color:#fff;border-color:var(--pri)}
   .nav span.cur{outline:2px solid var(--pri)}
   .hide{display:none!important}
+  .banner{border-color:var(--pri);background:rgba(44,94,232,.08)}
   #shield{position:fixed;inset:0;z-index:50;background:var(--bg);display:none;place-items:center;text-align:center;padding:24px}
   #shield.on{display:grid}
   #wm{position:fixed;inset:0;z-index:40;pointer-events:none;overflow:hidden;opacity:.07;
@@ -45,17 +46,31 @@
 
 <!--
   ===== CARA PAKAI SINGKAT =====
-  1. Edit blok CONFIG di bawah (judul, durasi, tanggal, SHEET_URL, MAKS_PERCOBAAN).
+  1. Atur jadwal dan pengaturan lain di blok CONFIG di bawah (cari tulisan "ATUR JADWAL DI SINI").
   2. Upload file ini ke repo GitHub dengan nama persis index.html, aktifkan GitHub Pages.
   3. Hasil dikirim ke Google Sheet lewat Google Apps Script (URL di SHEET_URL).
-  4. Saat Anda mengetes sendiri, set MODE_TES: true, lalu kembalikan ke false sebelum dibagikan.
+  4. Saat Anda mengetes sendiri, set MODE_TES: true (abaikan jadwal & riwayat), lalu kembalikan ke false.
 -->
 
 <div id="wm"></div>
 <div id="shield"><div><h2>Ujian dijeda</h2><p>Kembali ke halaman ujian untuk melanjutkan.<br>Perpindahan layar/tab dicatat sebagai pelanggaran.</p></div></div>
 
-<!-- LAYAR 1: IDENTITAS -->
+<!-- LAYAR: UJIAN BELUM DIBUKA / SUDAH DITUTUP -->
+<div id="s-tutup" class="wrap hide">
+  <div class="card" style="text-align:center">
+    <h1 id="tt-judul"></h1>
+    <p id="tt-ket" class="warn"></p>
+    <p class="mut">Halaman ini terbuka otomatis saat ujian dimulai.</p>
+  </div>
+</div>
+
+<!-- LAYAR 1: BERANDA / IDENTITAS -->
 <div id="s-id" class="wrap">
+  <div id="b-lanjut" class="card banner hide">
+    <h2>Ada ujian yang belum selesai</h2>
+    <p class="mut" id="bl-ket"></p>
+    <button id="btn-lanjut">Lanjutkan Ujian</button>
+  </div>
   <div class="card">
     <h1 id="t-judul"></h1>
     <p class="mut" id="t-info"></p>
@@ -77,19 +92,10 @@
       <li>Dilarang berpindah tab/aplikasi, menyalin, mengambil tangkapan layar, atau memakai AI.</li>
       <li>Setiap pelanggaran dicatat. Pelanggaran ke-<span id="t-max"></span> akan mengakhiri ujian otomatis.</li>
       <li>Jika ujian dihentikan karena pelanggaran yang tidak disengaja, Anda dapat mengulang (maksimal <span id="t-pct"></span> percobaan).</li>
-      <li>Jika halaman tertutup atau koneksi terputus, buka kembali link yang sama untuk melanjutkan. Waktu tetap berjalan.</li>
+      <li>Jika halaman tertutup atau di-refresh saat ujian, buka kembali link ini. Ujian yang belum selesai bisa dilanjutkan dari beranda, waktu tetap berjalan.</li>
+      <li>Satu perangkat boleh dipakai bergantian oleh beberapa peserta.</li>
     </ul>
     <button id="btn-mulai">Mulai Ujian</button>
-  </div>
-</div>
-
-<!-- LAYAR: LANJUTKAN SESI -->
-<div id="s-lanjut" class="wrap hide">
-  <div class="card">
-    <h1>Lanjutkan Ujian?</h1>
-    <p class="mut" id="l-ket"></p>
-    <p class="mut" id="l-sisa"></p>
-    <button id="btn-lanjut">Lanjutkan Ujian</button>
   </div>
 </div>
 
@@ -124,6 +130,7 @@
     <button id="btn-kirim" class="hide">Kirim Ulang Jawaban</button>
     <p class="mut" id="d-ulang"></p>
     <button id="btn-ulang" class="sec hide">Ulangi Ujian</button>
+    <div><button id="btn-beranda" class="sec">Kembali ke Beranda</button></div>
   </div>
 </div>
 
@@ -133,15 +140,21 @@ const CONFIG = {
   JUDUL: "Latihan Matematika: Bilangan Bulat",
   MAPEL: "Matematika SMP",
   DAFTAR_KELAS: ["7", "8", "9"],
-  DAFTAR_ROMBEL: ["A", "B", "C", "D", "E", "F", "G", "H", "I"],  // sesuaikan dengan jumlah rombel di sekolah
-  TANGGAL_UJIAN: "2026-10-09", // format TTTT-BB-HH; ujian hanya bisa dibuka pada tanggal ini ("" = tanpa batas tanggal)
-  DURASI_MENIT: 90,
+  DAFTAR_ROMBEL: ["A", "B", "C", "D", "E", "F"],  // sesuaikan dengan jumlah rombel di sekolah
+
+  /* ---------- ATUR JADWAL DI SINI ---------- */
+  TANGGAL_UJIAN: "2026-10-09",  // format TTTT-BB-HH. Kosongkan ("") jika tidak ingin dibatasi tanggal.
+  JAM_BUKA: "00:00",            // jam mulai boleh memulai ujian (24 jam). Contoh: "07:30"
+  JAM_TUTUP: "23:59",           // batas akhir untuk MEMULAI ujian. Contoh: "09:00"
+  DURASI_MENIT: 90,             // lama mengerjakan sejak siswa menekan Mulai
+  /* ---------------------------------------- */
+
   MAX_PELANGGARAN: 3,        // ujian otomatis berakhir pada pelanggaran ke-N
   MAKS_PERCOBAAN: 3,         // total percobaan per siswa jika ujian dihentikan karena pelanggaran (1 = tidak boleh mengulang)
   TAMPILKAN_NILAI: false,    // false = siswa TIDAK melihat nilai; nilai hanya masuk ke spreadsheet guru
-  SHEET_URL: "https://script.google.com/macros/s/AKfycbxgU3E4_0c0IZz-KkGB34_LvM0xWXOmPdQy0iCJS4JhAhi4J6wS1kzEUNpMyGciZQjL/exec",  // Google Apps Script milik guru
-  STORAGE_KEY: "ujian_bilangan_bulat_v2",
-  MODE_TES: false            // true = abaikan riwayat selesai di perangkat ini (untuk Anda mengetes berulang kali)
+  SHEET_URL: "https://script.google.com/macros/s/AKfycbyW2yqKIR13kNLpRFlT5y407cckgLklEJCu6H6dh_Kzla75gNg0r0bQwA8a8OUn2UE9/exec",  // Google Apps Script milik guru
+  STORAGE_KEY: "ujian_bilangan_bulat_v3",
+  MODE_TES: false            // true = abaikan jadwal dan riwayat di perangkat ini (untuk Anda mengetes berulang kali)
 };
 
 /* Format: q = soal, o = pilihan, a = indeks jawaban benar (mulai dari 0) */
@@ -160,11 +173,12 @@ const SOAL = [
 
 const $ = id => document.getElementById(id);
 const LABEL = "ABCDEFGH";
-const K_HASIL = CONFIG.STORAGE_KEY + "_hasil";   // hasil terakhir yang sudah selesai
-const K_SESI  = CONFIG.STORAGE_KEY + "_sesi";    // ujian yang sedang berjalan (untuk dilanjutkan)
+const K_SESI  = CONFIG.STORAGE_KEY + "_sesi";    // ujian yang sedang berjalan (bisa dilanjutkan)
+const K_RIW   = CONFIG.STORAGE_KEY + "_riwayat"; // riwayat percobaan per peserta di perangkat ini
+const K_ANTRI = CONFIG.STORAGE_KEY + "_antri";   // hasil yang belum berhasil terkirim
 
 let peserta = {}, paket = [], jawab = [], idx = 0, sisa = 0, endAt = 0, tick = null, nTick = 0;
-let pelanggaran = 0, aktif = false, selesai = false, lastViol = 0, percobaan = 1, muatUlang = 0;
+let pelanggaran = 0, aktif = false, selesai = false, lastViol = 0, percobaan = 1, muatUlang = 0, terakhir = null;
 
 /* ---------- util ---------- */
 function acak(arr){ const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]] = [a[j],a[i]]; } return a; }
@@ -172,8 +186,12 @@ function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt
 function baca(k){ try{ return JSON.parse(localStorage.getItem(k)); }catch(e){ return null; } }
 function tulis(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 function hapus(k){ try{ localStorage.removeItem(k); }catch(e){} }
-function show(id){ ["s-id","s-lanjut","s-ujian","s-done"].forEach(x => $(x).classList.toggle("hide", x!==id)); }
+const LAYAR = ["s-tutup","s-id","s-ujian","s-done"];
+function show(id){ LAYAR.forEach(x => $(x).classList.toggle("hide", x!==id)); }
+function layarSaatIni(){ return LAYAR.find(x => !$(x).classList.contains("hide")); }
 function fmtWaktu(d){ const m = Math.max(0,Math.floor(d/60)), s = Math.max(0,d%60); return String(m).padStart(2,"0")+":"+String(s).padStart(2,"0"); }
+function fmtTgl(t){ return t.split("-").reverse().join("-"); }
+function kunci(p){ return String(p.nama||"").toLowerCase().replace(/\s+/g," ") + "|" + p.absen + "|" + p.kelas; }
 function bangunPaket(){
   return acak(SOAL.map((s,i) => ({ id:i, q:s.q, o: acak(s.o.map((t,k) => ({t, ok:k===s.a}))) })));
 }
@@ -182,10 +200,66 @@ function simpan(){
   tulis(K_SESI, {peserta, paket, jawab, idx, endAt, pelanggaran, percobaan, muatUlang});
 }
 
+/* ---------- jadwal ---------- */
+function statusJadwal(){
+  if (CONFIG.MODE_TES || !CONFIG.TANGGAL_UJIAN) return "buka";
+  const b = new Date(`${CONFIG.TANGGAL_UJIAN}T${CONFIG.JAM_BUKA}:00`);
+  const t = new Date(`${CONFIG.TANGGAL_UJIAN}T${CONFIG.JAM_TUTUP}:59`);
+  const n = new Date();
+  return n < b ? "sebelum" : (n > t ? "sesudah" : "buka");
+}
+function jadwalTeks(){
+  if (!CONFIG.TANGGAL_UJIAN) return "";
+  const penuh = CONFIG.JAM_BUKA === "00:00" && CONFIG.JAM_TUTUP === "23:59";
+  return ` • ${fmtTgl(CONFIG.TANGGAL_UJIAN)}` + (penuh ? "" : ` pukul ${CONFIG.JAM_BUKA}–${CONFIG.JAM_TUTUP}`);
+}
+function tampilTutup(st){
+  $("tt-judul").textContent = CONFIG.JUDUL;
+  $("tt-ket").textContent = st === "sebelum"
+    ? `Ujian belum dibuka. Dibuka ${fmtTgl(CONFIG.TANGGAL_UJIAN)} pukul ${CONFIG.JAM_BUKA}.`
+    : `Ujian sudah ditutup (batas memulai ${fmtTgl(CONFIG.TANGGAL_UJIAN)} pukul ${CONFIG.JAM_TUTUP}).`;
+  show("s-tutup");
+}
+function cekJadwal(){
+  const cur = layarSaatIni();
+  if (aktif || cur === "s-ujian" || cur === "s-done") return;
+  const st = statusJadwal();
+  if (st === "buka" || sesiValid()) { if (cur !== "s-id") bukaBeranda(); }
+  else tampilTutup(st);
+}
+
+/* ---------- sesi, hasil, antrian ---------- */
+function sesiValid(){ const s = baca(K_SESI); return (s && Date.now() < s.endAt) ? s : null; }
+function susunHasil(s, alasan){
+  const benar = s.paket.reduce((n,p,i) => n + (s.jawab[i]!==null && p.o[s.jawab[i]].ok ? 1 : 0), 0);
+  return {...s.peserta, benar, total:s.paket.length, nilai:Math.round(benar/s.paket.length*100),
+    pelanggaran:s.pelanggaran || 0, alasan:`${alasan} (percobaan ke-${s.percobaan})`,
+    percobaan:s.percobaan, muat_ulang:s.muatUlang || 0,
+    henti: alasan.startsWith("Dihentikan"),     // true = dihentikan karena pelanggaran
+    uid: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+    waktu: new Date().toISOString()};
+}
+function catat(h){
+  const r = baca(K_RIW) || {}; r[kunci(h)] = {percobaan:h.percobaan, henti:h.henti}; tulis(K_RIW, r);
+  const a = baca(K_ANTRI) || []; a.push(h); tulis(K_ANTRI, a);
+}
+function bereskanSesiKadaluarsa(){
+  const s = baca(K_SESI);
+  if (s && Date.now() >= s.endAt) { catat(susunHasil(s, "Waktu habis")); hapus(K_SESI); }
+}
+async function kirimSatu(h){
+  if (!CONFIG.SHEET_URL) return false;
+  try {
+    await fetch(CONFIG.SHEET_URL, {method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(h)});
+    tulis(K_ANTRI, (baca(K_ANTRI) || []).filter(x => x.uid !== h.uid));
+    return true;
+  } catch(e){ return false; }
+}
+async function kirimAntrian(){ for (const h of (baca(K_ANTRI) || [])) await kirimSatu(h); }
+
 /* ---------- init ---------- */
 $("t-judul").textContent = CONFIG.JUDUL;
-$("t-info").textContent = `${CONFIG.MAPEL} • ${SOAL.length} soal • ${CONFIG.DURASI_MENIT} menit` +
-  (CONFIG.TANGGAL_UJIAN ? ` • Tanggal ${CONFIG.TANGGAL_UJIAN.split("-").reverse().join("-")}` : "");
+$("t-info").textContent = `${CONFIG.MAPEL} • ${SOAL.length} soal • ${CONFIG.DURASI_MENIT} menit` + jadwalTeks();
 $("t-max").textContent = CONFIG.MAX_PELANGGARAN;
 $("t-pct").textContent = CONFIG.MAKS_PERCOBAAN;
 $("kelas").innerHTML = `<option value="">-- Pilih Kelas --</option>` +
@@ -193,23 +267,22 @@ $("kelas").innerHTML = `<option value="">-- Pilih Kelas --</option>` +
 $("rombel").innerHTML = `<option value="">-- Pilih Rombel --</option>` +
   CONFIG.DAFTAR_ROMBEL.map(r => `<option value="${esc(r)}">Rombel ${esc(r)}</option>`).join("");
 
-function hariIni(){
-  const d = new Date();
-  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+function bukaBeranda(){
+  ["nama","absen","kelas","rombel"].forEach(id => { $(id).disabled = false; $(id).value = ""; });
+  $("err").textContent = "";
+  const s = sesiValid();
+  $("b-lanjut").classList.toggle("hide", !s);
+  if (s) {
+    $("bl-ket").textContent = `${s.peserta.nama} (Absen ${s.peserta.absen}, Kelas ${s.peserta.kelas}) — sisa waktu ${fmtWaktu(Math.ceil((s.endAt-Date.now())/1000))}. Jawaban yang sudah dipilih tetap tersimpan.`;
+    $("btn-lanjut").onclick = () => lanjutSesi(s);
+  }
+  show("s-id");
 }
-const TANGGAL_OK = !CONFIG.TANGGAL_UJIAN || hariIni() === CONFIG.TANGGAL_UJIAN;
 
-if (!TANGGAL_OK) {
-  show("s-done");
-  $("d-ket").textContent = `Ujian ini hanya dapat dibuka pada tanggal ${CONFIG.TANGGAL_UJIAN.split("-").reverse().join("-")}.`;
-  $("d-nilai").innerHTML = `<p class="warn">Ujian belum dibuka atau sudah ditutup.</p>`;
-  selesai = true;
-} else {
-  const sesi = baca(K_SESI), hasil = baca(K_HASIL);
-  if (sesi) tampilLanjut(sesi);                       // ujian terputus -> tawarkan melanjutkan
-  else if (hasil && !CONFIG.MODE_TES) tampilSelesai(hasil);  // sudah pernah selesai di perangkat ini
-  else show("s-id");
-}
+bereskanSesiKadaluarsa();
+kirimAntrian();
+cekJadwal();
+setInterval(cekJadwal, 15000);
 
 /* ---------- mulai (baru / ulang) ---------- */
 $("btn-mulai").onclick = async () => {
@@ -220,11 +293,27 @@ $("btn-mulai").onclick = async () => {
   if (nama.length < 3 || !/\s|^\S{3,}$/.test(nama)) return $("err").textContent = "Isi Nama Lengkap dengan benar.";
   if (!absen || +absen < 1) return $("err").textContent = "Isi Nomor Absen dengan benar.";
   if (!kelas) return $("err").textContent = "Pilih Kelas dan Rombel.";
-  $("err").textContent = "";
-  peserta = {nama, absen, kelas};
+  const p = {nama, absen, kelas};
 
-  const prev = baca(K_HASIL);
-  percobaan = prev ? (prev.percobaan || 1) + 1 : 1;
+  // ada ujian lain yang belum selesai di perangkat ini?
+  const sesi = sesiValid();
+  if (sesi) {
+    if (kunci(sesi.peserta) === kunci(p)) { lanjutSesi(sesi); return; }   // orang yang sama -> lanjutkan
+    if (!confirm(`Ujian atas nama ${sesi.peserta.nama} belum selesai.\nMemulai ujian baru akan mengumpulkan jawaban ${sesi.peserta.nama} apa adanya. Lanjutkan?`)) return;
+    catat(susunHasil(sesi, "Ditinggalkan (perangkat dipakai peserta lain)"));
+    hapus(K_SESI); kirimAntrian();
+  }
+
+  if (statusJadwal() !== "buka") { $("err").textContent = "Ujian belum dibuka atau sudah ditutup."; return cekJadwal(); }
+
+  const ex = (baca(K_RIW) || {})[kunci(p)];
+  if (ex && !CONFIG.MODE_TES) {
+    if (!ex.henti) return $("err").textContent = "Peserta ini sudah mengerjakan ujian di perangkat ini.";
+    if (ex.percobaan >= CONFIG.MAKS_PERCOBAAN) return $("err").textContent = "Kesempatan mengulang sudah habis. Silakan hubungi guru.";
+  }
+  $("err").textContent = "";
+
+  peserta = p; percobaan = ex ? (ex.percobaan || 1) + 1 : 1;
   muatUlang = 0; pelanggaran = 0;
 
   try { await document.documentElement.requestFullscreen(); }
@@ -244,7 +333,7 @@ function masukUjian(){
   show("s-ujian"); render();
   clearInterval(tick);
   tick = setInterval(() => {
-    sisa = Math.ceil((endAt - Date.now())/1000);   // dihitung dari waktu akhir, jadi reload tidak mereset timer
+    sisa = Math.ceil((endAt - Date.now())/1000);   // dihitung dari waktu akhir, jadi refresh tidak mereset timer
     updTimer();
     if (sisa <= 0) akhiri("Waktu habis");
     else if (++nTick % 5 === 0) simpan();
@@ -252,22 +341,12 @@ function masukUjian(){
   sisa = Math.ceil((endAt - Date.now())/1000); updTimer(); simpan();
 }
 
-/* ---------- lanjutkan sesi yang terputus ---------- */
-function tampilLanjut(s){
-  const sisaDetik = Math.ceil((s.endAt - Date.now())/1000);
-  $("l-ket").textContent = `${s.peserta.nama} (Absen ${s.peserta.absen}, Kelas ${s.peserta.kelas}) — ujian sebelumnya belum selesai (halaman tertutup atau koneksi terputus).`;
-  $("l-sisa").textContent = sisaDetik > 0
-    ? `Sisa waktu: ${fmtWaktu(sisaDetik)}. Jawaban yang sudah dipilih tetap tersimpan.`
-    : "Waktu ujian sudah habis. Jawaban yang tersimpan akan dikumpulkan.";
-  $("btn-lanjut").textContent = sisaDetik > 0 ? "Lanjutkan Ujian" : "Kumpulkan Jawaban";
-  show("s-lanjut");
-  $("btn-lanjut").onclick = async () => {
-    peserta = s.peserta; paket = s.paket; jawab = s.jawab; idx = s.idx || 0; endAt = s.endAt;
-    pelanggaran = s.pelanggaran || 0; percobaan = s.percobaan || 1; muatUlang = (s.muatUlang || 0) + 1;
-    if (Date.now() >= endAt) { akhiri("Waktu habis"); return; }
-    try { await document.documentElement.requestFullscreen(); } catch(e){}
-    masukUjian();
-  };
+async function lanjutSesi(s){
+  peserta = s.peserta; paket = s.paket; jawab = s.jawab; idx = s.idx || 0; endAt = s.endAt;
+  pelanggaran = s.pelanggaran || 0; percobaan = s.percobaan || 1; muatUlang = (s.muatUlang || 0) + 1;
+  if (Date.now() >= endAt) { await akhiri("Waktu habis"); return; }
+  try { await document.documentElement.requestFullscreen(); } catch(e){}
+  masukUjian();
 }
 
 /* ---------- render ---------- */
@@ -306,46 +385,28 @@ async function akhiri(alasan){
   $("shield").classList.remove("on");
   if (document.fullscreenElement) { try{ await document.exitFullscreen(); }catch(e){} }
 
-  const benar = paket.reduce((n,p,i) => n + (jawab[i]!==null && p.o[jawab[i]].ok ? 1 : 0), 0);
-  const nilai = Math.round(benar/paket.length*100);
-  const hasil = {...peserta, benar, total:paket.length, nilai, pelanggaran,
-                 alasan: `${alasan} (percobaan ke-${percobaan})`,
-                 percobaan, muat_ulang: muatUlang,
-                 henti: alasan.startsWith("Dihentikan"),     // true = dihentikan karena pelanggaran
-                 terkirim: false, waktu: new Date().toISOString()};
+  const h = susunHasil({peserta, paket, jawab, pelanggaran, percobaan, muatUlang}, alasan);
   hapus(K_SESI);
-  tulis(K_HASIL, hasil);     // disimpan dulu, jadi tidak hilang walau koneksi putus
-  tampilSelesai(hasil);
+  catat(h);          // disimpan dulu di perangkat, jadi tidak hilang walau koneksi putus
+  terakhir = h;
+  tampilSelesai(h);
 }
 
 function tampilSelesai(h){
-  selesai = true;
   show("s-done"); $("wm").textContent = "";
   $("d-ket").textContent = `${h.nama} (Absen ${h.absen}, Kelas ${h.kelas}) — ${h.alasan}`;
   $("d-nilai").innerHTML = CONFIG.TAMPILKAN_NILAI
     ? `<div class="big">${h.nilai}</div><div class="mut">${h.benar} benar dari ${h.total} soal</div>`
     : `<p>Terima kasih, ujian telah selesai. Hasil akan disampaikan oleh guru.</p>`;
 
-  // tombol ulang: hanya jika dihentikan karena pelanggaran & masih ada kesempatan
   const sisaPct = CONFIG.MAKS_PERCOBAAN - (h.percobaan || 1);
   const bisaUlang = h.henti && sisaPct > 0;
   $("btn-ulang").classList.toggle("hide", !bisaUlang);
   $("d-ulang").textContent = bisaUlang
     ? `Ujian Anda dihentikan karena pelanggaran. Jika itu tidak disengaja, Anda dapat mengulang (sisa kesempatan: ${sisaPct}).`
     : (h.henti ? "Kesempatan mengulang sudah habis. Silakan hubungi guru." : "");
-
-  if (h.terkirim) $("d-status").textContent = "Jawaban berhasil terkirim.";
-  else kirim(h);
+  kirim(h);
 }
-
-$("btn-ulang").onclick = () => {
-  const h = baca(K_HASIL); if (!h) return;
-  const k = CONFIG.DAFTAR_KELAS.find(x => h.kelas.startsWith(x)) || "";
-  $("nama").value = h.nama; $("absen").value = h.absen;
-  $("kelas").value = k; $("rombel").value = h.kelas.slice(k.length);
-  ["nama","absen","kelas","rombel"].forEach(id => $(id).disabled = true);   // identitas dikunci saat mengulang
-  selesai = false; show("s-id");
-};
 
 async function kirim(h){
   const st = $("d-status"), btn = $("btn-kirim");
@@ -355,16 +416,23 @@ async function kirim(h){
     return;
   }
   st.textContent = "Mengirim jawaban...";
-  try {
-    await fetch(CONFIG.SHEET_URL, {method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(h)});
-    h.terkirim = true; tulis(K_HASIL, h);
-    st.textContent = "Jawaban berhasil terkirim.";
-  } catch(e){
+  if (await kirimSatu(h)) st.textContent = "Jawaban berhasil terkirim.";
+  else {
     st.innerHTML = `<span class="warn">Gagal mengirim. Periksa koneksi internet, lalu tekan tombol di bawah.</span>`;
     btn.classList.remove("hide");
     btn.onclick = () => kirim(h);
   }
 }
+
+$("btn-ulang").onclick = () => {
+  const h = terakhir; if (!h) return;
+  const k = CONFIG.DAFTAR_KELAS.find(x => h.kelas.startsWith(x)) || "";
+  bukaBeranda();
+  $("nama").value = h.nama; $("absen").value = h.absen;
+  $("kelas").value = k; $("rombel").value = h.kelas.slice(k.length);
+  ["nama","absen","kelas","rombel"].forEach(id => $(id).disabled = true);   // identitas dikunci saat mengulang
+};
+$("btn-beranda").onclick = () => { selesai = false; terakhir = null; bukaBeranda(); cekJadwal(); };
 
 /* ---------- ANTI-KECURANGAN (penghambat & pendeteksi) ---------- */
 function pelanggar(sebab){
@@ -412,7 +480,7 @@ document.addEventListener("keyup", e => {
   if (aktif && e.key === "PrintScreen") { try{ navigator.clipboard.writeText(""); }catch(_){} pelanggar("Mencoba tangkapan layar"); }
 });
 
-// cegah tutup/refresh tidak sengaja (jika tetap tertutup, ujian bisa dilanjutkan dari link yang sama)
+// jawaban disimpan sebelum halaman ditutup/di-refresh; ujian bisa dilanjutkan dari beranda
 window.addEventListener("beforeunload", e => { if (aktif) { simpan(); e.preventDefault(); e.returnValue = ""; } });
 </script>
 </body>
