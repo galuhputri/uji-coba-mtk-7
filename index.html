@@ -83,10 +83,14 @@
     <ul class="mut">
       <li>Ujian berjalan layar penuh. Jangan keluar dari layar penuh.</li>
       <li>Dilarang berpindah tab/aplikasi, menyalin, mengambil tangkapan layar, atau memakai AI.</li>
-      <li>Setiap pelanggaran dicatat. Pelanggaran ke-<span id="t-max"></span> akan mengakhiri ujian otomatis.</li>
-      <li>Ujian hanya bisa dikerjakan satu kali di perangkat ini.</li>
+      <li>Jika tidak sengaja keluar tab/layar penuh atau koneksi terputus, segera kembali ke halaman ujian. Jawaban tersimpan otomatis di perangkat ini.</li>
+      <li>Jika halaman tertutup atau dimuat ulang, buka kembali tautan yang sama di perangkat dan browser yang sama untuk melanjutkan ujian selama waktu belum habis.</li>
+      <li>Pelanggaran tetap dicatat. Jika terjadi karena kendala teknis atau tidak sengaja, hubungi guru untuk verifikasi sebelum melanjutkan.</li>
+      <li>Ujian yang sudah dikumpulkan tidak dapat dikerjakan ulang tanpa izin guru.</li>
     </ul>
     <button id="btn-mulai">Mulai Ujian</button>
+    <button id="btn-lanjut" class="sec hide" style="margin-left:8px">Lanjutkan Ujian</button>
+    <p class="mut">Jangan menghapus data browser atau mengganti perangkat/browser jika ingin memulihkan jawaban.</p>
   </div>
 </div>
 
@@ -135,6 +139,7 @@ const CONFIG = {
   TAMPILKAN_NILAI: false,    // false = siswa TIDAK melihat nilai; nilai hanya masuk ke spreadsheet guru
   SHEET_URL: "https://script.google.com/macros/s/AKfycbxHgMc8czGd1uNse4HRO1YOu-le0U5CDp4qkrpCK7wgo08SsWsEMUb8niD83rlOJCiz/exec",  // Google Apps Script milik guru
   STORAGE_KEY: "ujian_bilangan_bulat_v1",
+  PROGRESS_KEY: "ujian_bilangan_bulat_progress_v1",
   SATU_KALI: true            // true = 1 perangkat hanya bisa mengerjakan 1 kali (set false saat Anda masih tes sendiri)
 };
 
@@ -156,6 +161,28 @@ const $ = id => document.getElementById(id);
 const LABEL = "ABCDEFGH";
 let peserta = {}, paket = [], jawab = [], idx = 0, sisa = 0, tick = null;
 let pelanggaran = 0, aktif = false, selesai = false, lastViol = 0, alasanAkhir = "";
+let sedangMelanjutkan = false;
+
+function simpanProgres(){
+  if (!aktif || selesai || !peserta.nama || !paket.length) return;
+  safeSet(CONFIG.PROGRESS_KEY, JSON.stringify({
+    peserta, paket, jawab, idx, sisa, pelanggaran,
+    expiresAt: Date.now() + Math.max(0, sisa) * 1000,
+    waktuSimpan: Date.now()
+  }));
+}
+function ambilProgres(){
+  try {
+    const raw = safeGet(CONFIG.PROGRESS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (!p || !p.peserta || !Array.isArray(p.paket) || !Array.isArray(p.jawab) ||
+        !Number.isFinite(p.expiresAt) || p.expiresAt <= Date.now()) return null;
+    p.sisa = Math.max(0, Math.floor((p.expiresAt - Date.now()) / 1000));
+    return p;
+  } catch(e) { return null; }
+}
+function hapusProgres(){ try { localStorage.removeItem(CONFIG.PROGRESS_KEY); } catch(e) {} }
 
 /* ---------- util ---------- */
 function acak(arr){ const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]] = [a[j],a[i]]; } return a; }
@@ -185,6 +212,9 @@ if (!TANGGAL_OK) {
   $("d-ket").textContent = `Ujian ini hanya dapat dibuka pada tanggal ${CONFIG.TANGGAL_UJIAN.split("-").reverse().join("-")}.`;
   $("d-nilai").innerHTML = `<p class="warn">Ujian belum dibuka atau sudah ditutup.</p>`;
   selesai = true;
+ } else if (ambilProgres()) {
+  $("btn-lanjut").classList.remove("hide");
+  $("err").textContent = "Ditemukan jawaban tersimpan. Tekan Lanjutkan Ujian untuk meneruskan.";
 } else if (CONFIG.SATU_KALI && safeGet(CONFIG.STORAGE_KEY)) {
   const prev = JSON.parse(safeGet(CONFIG.STORAGE_KEY));
   show("s-done");
@@ -208,26 +238,46 @@ $("btn-mulai").onclick = async () => {
   try { await document.documentElement.requestFullscreen(); }
   catch(e){ /* iOS Safari tidak mendukung; ujian tetap jalan dengan deteksi blur/tab */ }
 
-  // acak urutan soal dan pilihan jawaban
+  mulaiSesiBaru();
+};
+
+function mulaiSesiBaru(){
+  // Acak soal dan pilihan hanya saat ujian benar-benar baru.
   paket = acak(SOAL.map((s,i) => ({
     id:i, q:s.q,
     o: acak(s.o.map((t,k) => ({t, ok:k===s.a})))
   })));
   jawab = new Array(paket.length).fill(null);
-  idx = 0; sisa = CONFIG.DURASI_MENIT*60; aktif = true;
-
-  $("t-peserta").textContent = `${nama}`;
-  $("t-pel").textContent = `Absen ${absen} • Kelas ${kelas}`;
-  // watermark identitas (menyulitkan penyebaran tangkapan layar)
-  const wmText = `${nama} • ${absen} • ${kelas}   `.repeat(400);
-  $("wm").textContent = wmText;
-
-  buatNav(); render(); show("s-ujian");
+  idx = 0; sisa = CONFIG.DURASI_MENIT*60; pelanggaran = 0;
+  aktif = true; selesai = false;
+  tampilkanUjian();
+}
+function tampilkanUjian(){
+  $("t-peserta").textContent = `${peserta.nama}`;
+  $("t-pel").textContent = `Absen ${peserta.absen} • Kelas ${peserta.kelas} • Pelanggaran ${pelanggaran}`;
+  $("wm").textContent = (`${peserta.nama} • ${peserta.absen} • ${peserta.kelas}   `).repeat(400);
+  $("shield").classList.remove("on");
+  buatNav(); render(); show("s-ujian"); updTimer();
+  if (tick) clearInterval(tick);
   tick = setInterval(() => {
-    sisa--; updTimer();
+    sisa--; updTimer(); simpanProgres();
     if (sisa <= 0) akhiri("Waktu habis");
   }, 1000);
-  updTimer();
+  simpanProgres();
+}
+$("btn-lanjut").onclick = async () => {
+  const p = ambilProgres();
+  if (!p) {
+    $("btn-lanjut").classList.add("hide");
+    $("err").textContent = "Progres tidak ditemukan atau waktu ujian sudah habis. Hubungi guru.";
+    return;
+  }
+  peserta = p.peserta; paket = p.paket; jawab = p.jawab;
+  idx = Math.min(Math.max(0, p.idx || 0), paket.length - 1);
+  sisa = p.sisa; pelanggaran = p.pelanggaran || 0;
+  selesai = false; aktif = true;
+  try { await document.documentElement.requestFullscreen(); } catch(e) {}
+  tampilkanUjian();
 };
 
 /* ---------- render ---------- */
@@ -237,7 +287,7 @@ function render(){
   $("t-soal").textContent = p.q;
   $("opts").innerHTML = p.o.map((op,k) =>
     `<div class="opt ${jawab[idx]===k?'sel':''}" data-k="${k}"><b>${LABEL[k]}.</b><span>${esc(op.t)}</span></div>`).join("");
-  $("opts").querySelectorAll(".opt").forEach(el => el.onclick = () => { jawab[idx] = +el.dataset.k; render(); buatNav(); });
+  $("opts").querySelectorAll(".opt").forEach(el => el.onclick = () => { jawab[idx] = +el.dataset.k; simpanProgres(); render(); buatNav(); });
   $("btn-prev").disabled = idx===0;
   $("btn-next").disabled = idx===paket.length-1;
   buatNav();
@@ -245,10 +295,10 @@ function render(){
 function buatNav(){
   $("nav").innerHTML = paket.map((_,i) =>
     `<span class="${jawab[i]!==null?'done':''} ${i===idx?'cur':''}" data-i="${i}">${i+1}</span>`).join("");
-  $("nav").querySelectorAll("span").forEach(el => el.onclick = () => { idx = +el.dataset.i; render(); });
+  $("nav").querySelectorAll("span").forEach(el => el.onclick = () => { idx = +el.dataset.i; simpanProgres(); render(); });
 }
-$("btn-prev").onclick = () => { if(idx>0){ idx--; render(); } };
-$("btn-next").onclick = () => { if(idx<paket.length-1){ idx++; render(); } };
+$("btn-prev").onclick = () => { if(idx>0){ idx--; simpanProgres(); render(); } };
+$("btn-next").onclick = () => { if(idx<paket.length-1){ idx++; simpanProgres(); render(); } };
 function updTimer(){
   const m = String(Math.max(0,Math.floor(sisa/60))).padStart(2,"0");
   const s = String(Math.max(0,sisa%60)).padStart(2,"0");
@@ -273,6 +323,7 @@ async function akhiri(alasan){
   const hasil = {...peserta, benar, total:paket.length, nilai, pelanggaran, alasan,
                  waktu:new Date().toISOString()};
   safeSet(CONFIG.STORAGE_KEY, JSON.stringify(hasil));
+  hapusProgres();
 
   show("s-done"); $("wm").textContent = "";
   $("d-ket").textContent = `${peserta.nama} (Absen ${peserta.absen}, Kelas ${peserta.kelas}) — ${alasan}`;
@@ -295,7 +346,7 @@ async function kirim(hasil){
     await fetch(CONFIG.SHEET_URL, {method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(hasil)});
     st.textContent = "Jawaban berhasil terkirim.";
   } catch(e){
-    st.innerHTML = `<span class="warn">Gagal mengirim. Periksa koneksi internet, lalu tekan tombol di bawah.</span>`;
+    st.innerHTML = `<span class="warn">Jawaban sudah tersimpan di perangkat, tetapi belum dapat dikirim ke guru. Periksa koneksi internet, lalu tekan "Kirim Ulang Jawaban". Jangan menutup atau menghapus data browser sebelum berhasil.</span>`;
     btn.classList.remove("hide");
     btn.onclick = () => kirim(hasil);
   }
@@ -307,21 +358,26 @@ function pelanggar(sebab){
   const now = Date.now();
   if (now - lastViol < 1500) return;       // cegah hitung ganda (blur + visibilitychange)
   lastViol = now; pelanggaran++;
-  if (pelanggaran >= CONFIG.MAX_PELANGGARAN) { akhiri(`Dihentikan: ${sebab}`); return; }
-  alert(`PERINGATAN ${pelanggaran}/${CONFIG.MAX_PELANGGARAN}: ${sebab}.\nPelanggaran ke-${CONFIG.MAX_PELANGGARAN} akan mengakhiri ujian.`);
+  $("t-pel").textContent = `Absen ${peserta.absen} • Kelas ${peserta.kelas} • Pelanggaran ${pelanggaran}`;
+  simpanProgres();
+  if (pelanggaran >= CONFIG.MAX_PELANGGARAN) {
+    alert(`Peringatan ${pelanggaran}/${CONFIG.MAX_PELANGGARAN}: ${sebab}.\nUjian tidak langsung diakhiri agar kendala teknis yang tidak disengaja tidak menghilangkan jawaban. Aktivitas tercatat dan guru dapat memeriksa hasilnya.`);
+    return;
+  }
+  alert(`PERINGATAN ${pelanggaran}/${CONFIG.MAX_PELANGGARAN}: ${sebab}.\nJika ini terjadi karena koneksi atau tidak sengaja, kembali ke ujian. Jawaban tersimpan otomatis.`);
   if (!document.fullscreenElement && document.documentElement.requestFullscreen)
     document.documentElement.requestFullscreen().catch(()=>{});
 }
 
 // pindah tab / minimize / buka aplikasi lain / Google Lens, dsb.
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { $("shield").classList.add("on"); pelanggar("Meninggalkan halaman ujian"); }
-  else $("shield").classList.remove("on");
+  if (document.hidden) { $("shield").classList.add("on"); pelanggar("Meninggalkan halaman ujian"); simpanProgres(); }
+  else { $("shield").classList.remove("on"); simpanProgres(); }
 });
 window.addEventListener("blur", () => { if (aktif) { $("shield").classList.add("on"); pelanggar("Halaman ujian kehilangan fokus"); } });
-window.addEventListener("focus", () => $("shield").classList.remove("on"));
+window.addEventListener("focus", () => { $("shield").classList.remove("on"); simpanProgres(); });
 document.addEventListener("fullscreenchange", () => {
-  if (aktif && !document.fullscreenElement) pelanggar("Keluar dari layar penuh");
+  if (aktif && !document.fullscreenElement) { pelanggar("Keluar dari layar penuh"); simpanProgres(); }
 });
 
 // salin / tempel / klik kanan / seleksi / seret / cetak
@@ -349,7 +405,12 @@ document.addEventListener("keyup", e => {
 });
 
 // cegah tutup/refresh tidak sengaja
-window.addEventListener("beforeunload", e => { if (aktif) { e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("beforeunload", e => {
+  if (aktif) {
+    simpanProgres();
+    e.preventDefault(); e.returnValue = "";
+  }
+});
 </script>
 </body>
 </html>
